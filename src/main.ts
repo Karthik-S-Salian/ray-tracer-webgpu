@@ -1,8 +1,8 @@
-export { } //just to make it module so can use top level await44
+import fragmentShader from './fragment.wgsl?raw'
+import vertexShader from './vertex.wgsl?raw'
+import { mat4, vec3 } from 'wgpu-matrix';
 
-const focalLength = 1.0;
-const cameraCenter = new Float32Array([0, 0, 0])
-
+const cameraCenter = new Float32Array([0, 0, -1])
 
 /******************************************************************************* */
 
@@ -10,7 +10,7 @@ if (!navigator.gpu) {
     throw new Error("WebGPU not supported on this browser.");
 }
 
-const adapter = await navigator.gpu.requestAdapter();
+const adapter = await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
 if (!adapter) {
     throw new Error("No appropriate GPUAdapter found.");
 }
@@ -88,15 +88,73 @@ const camCenterUniformBuffer = createUniformBuffer(cameraCenter, "camera center 
 interface Sphere {
     center: number[],
     radius: number
+    material: {
+        type: number,
+        attenuation: number[],
+        fuzz: number,
+        refraction_index: number
+    }
 }
 
-function createSpheresStorageBuffer(spheres: Sphere[]): GPUBuffer {
-    const values = [];
+enum MaterialType {
+    Labertian = 0,
+    Metal = 1,
+    Glass = 2
+}
 
-    for (const sphere of spheres) {
-        values.push(...sphere.center, sphere.radius);
+const spheres: Sphere[] = [
+    {
+        center: [0, -100.5, -1],
+        radius: 100,
+        material: {
+            type: MaterialType.Labertian,
+            fuzz: 1.0,
+            refraction_index: 1.0,
+            attenuation: [0.8, 0.8, 0],
+        }
+    },
+    {
+        center: [0, 0, -1],
+        radius: 0.5,
+        material: {
+            type: MaterialType.Labertian,
+            fuzz: 0,
+            refraction_index: 1.0,
+            attenuation: [0.7, 0.3, 0.3],
+        }
+    },
+    {
+        center: [-1, 0, -1],
+        radius: 0.5,
+        material: {
+            type: MaterialType.Metal,
+            fuzz: 0,
+            refraction_index: 1.5,
+            attenuation: [.7, .3, 0.5],
+        }
+    },
+    {
+        center: [1, 0, -1],
+        radius: 0.5,
+        material: {
+            type: MaterialType.Metal,
+            fuzz: 0,
+            refraction_index: 1.0,
+            attenuation: [0.8, 0.6, 0.2],
+        }
     }
-    const arrayBuffer = new Float32Array(values);
+]
+
+
+function createSpheresStorageBuffer(spheres: Sphere[]): GPUBuffer {
+    const kCenterOffset = 0;
+    const kCategoryOffset = 16 / 4;
+    const kAttenuationOffset = 32 / 4;
+    const kFuzzOffset = 20 / 4;
+    const kElementOffset = 48 / 4;
+
+    const arrayBuffer = new Float32Array(spheres.length * kElementOffset);
+    const u32s = new Uint32Array(arrayBuffer.buffer);
 
     const buffer = device.createBuffer({
         label: "spheres buffer",
@@ -104,156 +162,53 @@ function createSpheresStorageBuffer(spheres: Sphere[]): GPUBuffer {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
+    for (const [index, sphere] of spheres.entries()) {
+        const offset = index * kElementOffset;
+        arrayBuffer.set([...sphere.center, sphere.radius], offset + kCenterOffset);
+
+        const { type, attenuation, fuzz, refraction_index } = sphere.material;
+
+        u32s.set([type], offset + kCategoryOffset)
+
+        arrayBuffer.set([fuzz, refraction_index], offset + kFuzzOffset);
+        arrayBuffer.set(attenuation, offset + kAttenuationOffset);
+
+    }
+
+    // Upload all spheres at once
     device.queue.writeBuffer(buffer, 0, arrayBuffer);
     return buffer
 }
-
-const spheres: Sphere[] = [
-    {
-        center: [0,-100.5,-1],
-        radius: 100
-    }, 
-    {
-        center: [0, 0, -1],
-        radius: 0.5
-    },
-
-]
 
 const spheresStorageBuffer = createSpheresStorageBuffer(spheres);
 
 /************************************************************************ */
 
+const aspect = canvas.width / canvas.height;
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, -1, 1000.0);
+const modelViewProjectionMatrix = mat4.create();
+
+function getTransformationMatrix() {
+    const viewMatrix = mat4.identity();
+    mat4.translate(viewMatrix, cameraCenter, viewMatrix);
+    const now = Date.now() / 1000;
+    mat4.rotate(
+        viewMatrix,
+        vec3.fromValues(Math.sin(now), Math.cos(now), 0),
+        1,
+        viewMatrix
+    );
+
+    mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+
+    return modelViewProjectionMatrix as Float32Array;
+}
+
+/********************************************************************** */
 
 const cellShaderModule = device.createShaderModule({
     label: 'Cell shader',
-    code: `
-
-    struct VertexOutput {
-        @builtin(position) pos: vec4f,
-      };
-
-      @vertex
-      fn vertexMain(@location(0) pos: vec2f) ->
-      VertexOutput {
-        var output: VertexOutput;
-        output.pos = vec4f(pos, 0, 1);
-        return output;
-      }
-    
-    struct Ray {
-        origin: vec3f,
-        direction: vec3f,
-    }
-    
-    struct Sphere{
-        center:vec3f,
-        radius:f32
-    }
-
-    struct Material{
-        albedo: vec3f,
-        fuzz: vec3f,
-        refraction_index: f32
-    }
-
-    struct Hit_record {
-        hit:bool,
-        point: vec3f,
-        normal:vec3f,
-        t: f32,
-        front_face:bool
-    };
-
-
-    @group(0) @binding(0) var<uniform> window_size: vec2f;
-    @group(0) @binding(1) var<uniform> cam_center: vec3f;
-    @group(0) @binding(2) var<storage, read> spheres: array<Sphere>;
-
-    fn ray_at(ray:Ray,dist:f32)->vec3f{
-        return ray.origin+ray.direction*dist;
-    }
-
-
-    fn hit_sphere(sphere:Sphere,ray:Ray,tmin:f32,tmax:f32)->Hit_record {
-        var hit_record:Hit_record;
-        let oc = ray.origin - sphere.center;
-        let a = dot(ray.direction, ray.direction);
-        let half_b = dot(oc, ray.direction);
-        let c = dot(oc, oc) - sphere.radius*sphere.radius;
-        let discriminant = half_b*half_b - a*c;
-
-        if (discriminant < 0) {
-            hit_record.hit=false;
-            return hit_record;
-        }
-
-        let sqrtd = sqrt(discriminant);
-
-        var root = (-half_b - sqrtd) / a;
-        if (root <= tmin || tmax <= root) {
-            root = (-half_b + sqrtd) / a;
-            if (root <= tmin || tmax <= root){
-                hit_record.hit=false;
-                return hit_record;
-            }
-        }
-
-        hit_record.t = root;
-        hit_record.point = ray_at(ray,root);
-        hit_record.normal = (hit_record.point - sphere.center) / sphere.radius;
-        hit_record.front_face = dot(ray.direction, hit_record.normal) < 0;
-        if !hit_record.front_face {
-            hit_record.normal = -hit_record.normal;
-        }
-        hit_record.hit = true;
-        return hit_record;
-    }
-
-    fn hit(ray:Ray,tmin:f32,tmax:f32)->Hit_record{
-        var closest_so_far = tmax;
-        var hit_record:Hit_record;
-        hit_record.hit=false;
-
-        for(var i = 0 ; i < i32(arrayLength(&spheres));i=i+1){
-            let sphere = spheres[i];
-            let temp_record = hit_sphere(sphere,ray,tmin,closest_so_far);
-
-            if temp_record.hit {
-                closest_so_far = temp_record.t;
-                hit_record = temp_record;
-
-            }
-        }
-        return hit_record;
-    }
-      
-    fn ray_color(ray: Ray) -> vec3f {
-        
-        //let hit_record = hit_sphere(Sphere(vec3f(0,0,-1),0.5),ray,0,10000);
-        let hit_record =  hit(ray,0,10000);
-        if hit_record.hit {
-            return 0.5*(hit_record.normal+1);
-        }
-
-        let t = 0.5 * (ray.direction.y + 1.);
-        return (1. - t) * vec3(1.) + t * vec3(0.3, 0.5, 1.);
-    }
-
-    @fragment 
-    fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-        let focus_distance = 1.;
-        let aspect_ratio = window_size[0]/window_size[1];
-      
-        // Map pos from y-down viewport coordinates to camera viewport plane coordinates.
-        var uv = input.pos.xy / (window_size-1);
-        uv = (2. * uv - vec2(1.)) * vec2(aspect_ratio, -1.);
-      
-        let direction = vec3(uv, -focus_distance);
-        let ray = Ray(cam_center, normalize(direction));
-        return vec4(ray_color(ray), 1.);
-      }
-    `
+    code: vertexShader + fragmentShader
 });
 
 
@@ -261,7 +216,7 @@ const bindGroupLayout = device.createBindGroupLayout({
     label: "Cell Bind Group Layout",
     entries: [{
         binding: 0,
-        visibility:GPUShaderStage.FRAGMENT,
+        visibility: GPUShaderStage.FRAGMENT,
         buffer: {}// default uniform
     }, {
         binding: 1,
@@ -271,6 +226,10 @@ const bindGroupLayout = device.createBindGroupLayout({
         binding: 2,
         visibility: GPUShaderStage.FRAGMENT,
         buffer: { type: "read-only-storage" }
+    }, {
+        binding: 3,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: {}
     }]
 });
 
@@ -290,11 +249,17 @@ const cellPipeline = device.createRenderPipeline({
     },
     fragment: {
         module: cellShaderModule,
-        entryPoint: "fragmentMain",
+        entryPoint: "fragmentMain2",
         targets: [{
             format: canvasFormat
         }]
     }
+});
+
+const uniformProjectionBuffer = device.createBuffer({
+    label: "projection matrix",
+    size: 4*16,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
 const bindGroup = device.createBindGroup({
@@ -310,27 +275,45 @@ const bindGroup = device.createBindGroup({
     {
         binding: 2,
         resource: { buffer: spheresStorageBuffer }
+    },{
+        binding: 3,
+        resource: { buffer: uniformProjectionBuffer }
     }],
 });
 
-const encoder = device.createCommandEncoder();
+function frame() {
+    const transformationMatrix = getTransformationMatrix();
 
-const pass = encoder.beginRenderPass({
-    colorAttachments: [{
-        view: context.getCurrentTexture().createView(),
-        loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
-        storeOp: "store",
-    }],
-});
+    console.log(transformationMatrix)
 
+    device.queue.writeBuffer(
+        uniformProjectionBuffer,
+        0,
+        transformationMatrix.buffer,
+        transformationMatrix.byteOffset,
+        transformationMatrix.byteLength
+      );
 
-pass.setPipeline(cellPipeline);
-pass.setVertexBuffer(0, vertexBuffer);
-pass.setBindGroup(0, bindGroup);
-pass.draw(vertices.length / 2);
+    const encoder = device.createCommandEncoder();
 
-pass.end();
+    const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0.4, a: 1 }, // New line
+            storeOp: "store",
+        }],
+    });
 
-// Finish the command buffer and immediately submit it.
-device.queue.submit([encoder.finish()]);
+    pass.setPipeline(cellPipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(vertices.length / 2);
+
+    pass.end();
+
+    // Finish the command buffer and immediately submit it.
+    device.queue.submit([encoder.finish()]);
+    requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
