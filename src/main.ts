@@ -1,6 +1,9 @@
 import fragmentShader from './fragment.wgsl?raw'
 import vertexShader from './vertex.wgsl?raw'
 
+
+import { getBGCoverRectVertices,spheres,type Sphere } from './utils';
+
 const cameraCenter = new Float32Array([0, 0, 0])
 
 /******************************************************************************* */
@@ -31,26 +34,16 @@ context.configure({
 });
 /************************************************************************ */
 
-// vertex buffer
-const cover = 1.0
-const vertices = new Float32Array([
-    //   X,    Y,
-    -cover, -cover, // Triangle 1 (Blue)
-    cover, -cover,
-    cover, cover,
-
-    -cover, -cover, // Triangle 2 (Red)
-    cover, cover,
-    -cover, cover,
-]);
-
+const coverVertices =getBGCoverRectVertices() 
 const vertexBuffer = device.createBuffer({
     label: "Cell vertices",
-    size: vertices.byteLength,
+    size: coverVertices.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
 
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, coverVertices);
+
+
 
 const vertexBufferLayout: GPUVertexBufferLayout = {
     arrayStride: 8,
@@ -83,66 +76,6 @@ const camCenterUniformBuffer = createUniformBuffer(cameraCenter, "camera center 
 /************************************************************************* */
 
 //storage buffers ** objects**
-
-interface Sphere {
-    center: number[],
-    radius: number
-    material: {
-        type: number,
-        attenuation: number[],
-        fuzz: number,
-        refraction_index: number
-    }
-}
-
-enum MaterialType {
-    Labertian = 0,
-    Metal = 1,
-    Glass = 2
-}
-
-const spheres: Sphere[] = [
-    {
-        center: [0, -100.5, -1],
-        radius: 100,
-        material: {
-            type: MaterialType.Labertian,
-            fuzz: 1.0,
-            refraction_index: 1.0,
-            attenuation: [0.8, 0.8, 0],
-        }
-    },
-    {
-        center: [0, 0, -1],
-        radius: 0.5,
-        material: {
-            type: MaterialType.Labertian,
-            fuzz: 0,
-            refraction_index: 1.0,
-            attenuation: [0.7, 0.3, 0.3],
-        }
-    },
-    {
-        center: [-1, 0, -1],
-        radius: 0.5,
-        material: {
-            type: MaterialType.Metal,
-            fuzz: 0,
-            refraction_index: 1.5,
-            attenuation: [.7, .3, 0.5],
-        }
-    },
-    {
-        center: [1, 0, -1],
-        radius: 0.5,
-        material: {
-            type: MaterialType.Metal,
-            fuzz: 0,
-            refraction_index: 1.0,
-            attenuation: [0.8, 0.6, 0.2],
-        }
-    }
-]
 
 
 function createSpheresStorageBuffer(spheres: Sphere[]): GPUBuffer {
@@ -182,10 +115,6 @@ function createSpheresStorageBuffer(spheres: Sphere[]): GPUBuffer {
 const spheresStorageBuffer = createSpheresStorageBuffer(spheres);
 
 /************************************************************************ */
-
-
-
-/********************************************************************** */
 
 const cellShaderModule = device.createShaderModule({
     label: 'Cell shader',
@@ -266,7 +195,7 @@ function frame() {
     pass.setPipeline(cellPipeline);
     pass.setVertexBuffer(0, vertexBuffer);
     pass.setBindGroup(0, bindGroup);
-    pass.draw(vertices.length / 2);
+    pass.draw(coverVertices.length / 2);
 
     pass.end();
 
