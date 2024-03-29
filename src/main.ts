@@ -1,8 +1,7 @@
 import fragmentShader from './fragment.wgsl?raw'
 import vertexShader from './vertex.wgsl?raw'
-import { mat4, vec3 } from 'wgpu-matrix';
 
-const cameraCenter = new Float32Array([0, 0, -1])
+const cameraCenter = new Float32Array([0, 0, 0])
 
 /******************************************************************************* */
 
@@ -184,25 +183,7 @@ const spheresStorageBuffer = createSpheresStorageBuffer(spheres);
 
 /************************************************************************ */
 
-const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, -1, 1000.0);
-const modelViewProjectionMatrix = mat4.create();
 
-function getTransformationMatrix() {
-    const viewMatrix = mat4.identity();
-    mat4.translate(viewMatrix, cameraCenter, viewMatrix);
-    const now = Date.now() / 1000;
-    mat4.rotate(
-        viewMatrix,
-        vec3.fromValues(Math.sin(now), Math.cos(now), 0),
-        1,
-        viewMatrix
-    );
-
-    mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
-
-    return modelViewProjectionMatrix as Float32Array;
-}
 
 /********************************************************************** */
 
@@ -226,10 +207,6 @@ const bindGroupLayout = device.createBindGroupLayout({
         binding: 2,
         visibility: GPUShaderStage.FRAGMENT,
         buffer: { type: "read-only-storage" }
-    }, {
-        binding: 3,
-        visibility: GPUShaderStage.FRAGMENT,
-        buffer: {}
     }]
 });
 
@@ -256,11 +233,6 @@ const cellPipeline = device.createRenderPipeline({
     }
 });
 
-const uniformProjectionBuffer = device.createBuffer({
-    label: "projection matrix",
-    size: 4*16,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-});
 
 const bindGroup = device.createBindGroup({
     label: "Cell renderer bind group",
@@ -275,24 +247,10 @@ const bindGroup = device.createBindGroup({
     {
         binding: 2,
         resource: { buffer: spheresStorageBuffer }
-    },{
-        binding: 3,
-        resource: { buffer: uniformProjectionBuffer }
     }],
 });
 
 function frame() {
-    const transformationMatrix = getTransformationMatrix();
-
-    console.log(transformationMatrix)
-
-    device.queue.writeBuffer(
-        uniformProjectionBuffer,
-        0,
-        transformationMatrix.buffer,
-        transformationMatrix.byteOffset,
-        transformationMatrix.byteLength
-      );
 
     const encoder = device.createCommandEncoder();
 
@@ -314,6 +272,6 @@ function frame() {
 
     // Finish the command buffer and immediately submit it.
     device.queue.submit([encoder.finish()]);
-    requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+
+frame();
