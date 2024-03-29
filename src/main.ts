@@ -2,7 +2,8 @@ import fragmentShader from './fragment.wgsl?raw'
 import vertexShader from './vertex.wgsl?raw'
 import { mat4, vec3 } from 'wgpu-matrix';
 
-const cameraCenter = new Float32Array([0, 0, -1])
+const cameraCenter = vec3.fromValues(0,0,0);
+const cameraRotation = vec3.fromValues(0,0, 0);
 
 /******************************************************************************* */
 
@@ -80,7 +81,7 @@ function createUniformBuffer(value: Float32Array, label: string): GPUBuffer {
 const windSizeUniformBuffer = createUniformBuffer(
     new Float32Array([canvas.width, canvas.height]), "Window SIze Uniforms")
 
-const camCenterUniformBuffer = createUniformBuffer(cameraCenter, "camera center uniform")
+const camCenterUniformBuffer = createUniformBuffer(cameraCenter  as Float32Array, "camera center uniform")
 /************************************************************************* */
 
 //storage buffers ** objects**
@@ -185,17 +186,16 @@ const spheresStorageBuffer = createSpheresStorageBuffer(spheres);
 /************************************************************************ */
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 5, aspect, -1, 1000.0);
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 2, aspect, -1, 1000.0);
 const modelViewProjectionMatrix = mat4.create();
 
 function getTransformationMatrix() {
     const viewMatrix = mat4.identity();
     mat4.translate(viewMatrix, cameraCenter, viewMatrix);
-    const now = Date.now() / 1000;
     mat4.rotate(
         viewMatrix,
-        vec3.fromValues(Math.sin(now), Math.cos(now), 0),
-        1,
+        cameraRotation,
+        10,
         viewMatrix
     );
 
@@ -281,10 +281,78 @@ const bindGroup = device.createBindGroup({
     }],
 });
 
+
+let moveSpeed = 0.1;
+
+document.addEventListener('keydown', (event) => {
+    let dx=0,dy=0,dz=0;
+    switch (event.key) {
+        case 'w': // Move forward
+            dz-=moveSpeed;
+            break;
+        case 's': // Move backward
+            dz+= moveSpeed;
+            break;
+        case 'a': // Strafe left
+            dx -= moveSpeed;
+            break;
+        case 'd': // Strafe right
+            dx+= moveSpeed;
+            break;
+        case 'q': // Move down (optional)
+            dy -= moveSpeed;
+            break;
+        case 'e': // Move up (optional)
+            dy += moveSpeed;
+            break;
+        default:
+            break;
+    }
+    vec3.add(cameraCenter,vec3.fromValues(dx,dy,dz),cameraCenter)
+});
+
+
+// Define rotation speed
+const rotationSpeed = 0.002;
+
+let isDragging = false;
+let previousMousePosition = { x: 0, y: 0 };
+
+// Event listener for mouse movement
+document.addEventListener('mousemove', (event) => {
+    if (isDragging) {
+        const deltaX = event.clientX - previousMousePosition.x;
+        const deltaY = event.clientY - previousMousePosition.y;
+
+        let dx = -deltaX * rotationSpeed;
+        let dy = deltaY * rotationSpeed;
+
+        // Limit vertical rotation to avoid flipping the camera
+        dx = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, dx));
+        vec3.add(cameraCenter,vec3.fromValues(dx,dy,0),cameraCenter)
+
+        // Update previous mouse position
+        previousMousePosition = { x: event.clientX, y: event.clientY };
+    }
+});
+
+// Event listeners for mouse down and up events
+document.addEventListener('mousedown', (event) => {
+    isDragging = true;
+    previousMousePosition = { x: event.clientX, y: event.clientY };
+});
+
+document.addEventListener('mouseup', () => {
+    isDragging = false;
+});
+
+
+function getCameraCenter(){
+    return cameraCenter as Float32Array
+}
+
 function frame() {
     const transformationMatrix = getTransformationMatrix();
-
-    console.log(transformationMatrix)
 
     device.queue.writeBuffer(
         uniformProjectionBuffer,
@@ -292,6 +360,15 @@ function frame() {
         transformationMatrix.buffer,
         transformationMatrix.byteOffset,
         transformationMatrix.byteLength
+      );
+     
+      let cameraCenter = getCameraCenter()
+      device.queue.writeBuffer(
+        camCenterUniformBuffer,
+        0,
+        cameraCenter.buffer,
+        cameraCenter.byteOffset,
+        cameraCenter.byteLength
       );
 
     const encoder = device.createCommandEncoder();
@@ -316,4 +393,5 @@ function frame() {
     device.queue.submit([encoder.finish()]);
     requestAnimationFrame(frame);
 }
+
 requestAnimationFrame(frame);
