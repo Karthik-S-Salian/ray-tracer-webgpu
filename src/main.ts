@@ -1,3 +1,4 @@
+
 import fragmentShader from './fragment.wgsl?raw'
 import vertexShader from './vertex.wgsl?raw'
 import { mat4, vec3 } from 'wgpu-matrix';
@@ -186,18 +187,18 @@ const spheresStorageBuffer = createSpheresStorageBuffer(spheres);
 /************************************************************************ */
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 2, aspect, -1, 1000.0);
+const projectionMatrix = mat4.perspective(Math.PI / 2, aspect, -10, 1000.0);
 const modelViewProjectionMatrix = mat4.create();
 
 function getTransformationMatrix() {
     const viewMatrix = mat4.identity();
     mat4.translate(viewMatrix, cameraCenter, viewMatrix);
-    mat4.rotate(
-        viewMatrix,
-        cameraRotation,
-        10,
-        viewMatrix
-    );
+    // mat4.rotate(
+    //     viewMatrix,
+    //     vec3.fromValues(0,1,0),
+    //     90/180*Math.PI,
+    //     viewMatrix
+    // )
 
     mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
 
@@ -329,7 +330,9 @@ document.addEventListener('mousemove', (event) => {
 
         // Limit vertical rotation to avoid flipping the camera
         dx = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, dx));
-        vec3.add(cameraCenter,vec3.fromValues(dx,dy,0),cameraCenter)
+        vec3.add(cameraRotation,vec3.fromValues(dx,dy,0),cameraRotation)
+
+        console.log(Array.from(cameraRotation))
 
         // Update previous mouse position
         previousMousePosition = { x: event.clientX, y: event.clientY };
@@ -391,7 +394,7 @@ function frame() {
 
     // Finish the command buffer and immediately submit it.
     device.queue.submit([encoder.finish()]);
-    requestAnimationFrame(frame);
+     requestAnimationFrame(frame);
 }
 
 requestAnimationFrame(frame);

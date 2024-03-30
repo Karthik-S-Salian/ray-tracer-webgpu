@@ -250,7 +250,7 @@ fn ray_color(ray: Ray) -> vec3f {
 @fragment 
 fn fragmentMain3(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let outputColor = modelViewProjectionMatrix * pos/vec4f(window_size,1,1);
-    return vec4f(outputColor.xyz,1);
+    return outputColor;
 }
 
 
@@ -261,28 +261,28 @@ fn fragmentMain2(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let aspect_ratio = window_size.x / window_size.y;
     let focal_length = 1.;
     let viewport_height = 2.;
-
-    let viewport_u = viewport_height * aspect_ratio;    // Vector across viewport horizontal edge
-    let viewport_v = viewport_height;
+    let viewport_width = viewport_height * aspect_ratio;    // Vector across viewport horizontal edge
       
         // Map pos from y-down viewport coordinates to camera viewport plane coordinates.
     var uv = pos.xy / (window_size - 1);
     uv = (viewport_height * uv - 1.) * vec2(aspect_ratio, -1.);
 
-    let pixel_delta = uv / window_size;
+    let transformed_uv = modelViewProjectionMatrix * vec4f(uv,focal_length,0);
 
-    var direction = vec3f(uv, -focal_length);
-    var ray = Ray(cam_center, normalize(direction));
+    let pixel_delta = vec2f(viewport_width,viewport_height) / window_size;
 
+    var ray = Ray(cam_center, normalize(transformed_uv.xyz));
+    
     var sum = ray_color(ray);
 
     for (var i = 0; i < ANTIALIASING_SAMPLES; i++) {
         let offset = pixel_delta * vec2f(random_float(), random_float());
-        direction = vec3(uv + offset, -focal_length);
+        let direction = vec3(uv + offset, -focal_length);
         ray = Ray(cam_center, normalize(direction));
         sum += ray_color(ray);
     }
 
     let averagedColor = sum / f32(ANTIALIASING_SAMPLES + 1);
     return vec4(sqrt(averagedColor), 1.); //sqrt for gamma correction
+    // return vec4f(sqrt(ray_color(ray)),1.0);
 }
