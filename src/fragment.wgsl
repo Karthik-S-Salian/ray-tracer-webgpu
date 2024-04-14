@@ -36,8 +36,8 @@ struct BouncedRay {
 @group(0) @binding(3) var<uniform> modelViewProjectionMatrix: mat4x4f;
 var<private> rng_state:i32;
 const PI = f32(3.1415926535897932384626433832795);
-const MAX_DEPTH =40;
-const ANTIALIASING_SAMPLES=10;
+const MAX_DEPTH =20;
+const ANTIALIASING_SAMPLES=100;
 
 
 fn random_float() -> f32 {
@@ -59,6 +59,19 @@ fn random_unit_vector() -> vec3f {
     let z = cos(phi);
 
     return vec3f(x, y, z);
+}
+
+
+fn random_in_unit_disk()->vec2f{
+    // let theta = random_float() * 2 * PI;
+    // return vec3f(random_float()*sin(theta),random_float()*cos(theta),0);
+    while(true){
+        let v = vec2f(random_float(),random_float());
+        if(length(v)<1){
+            return v;
+        }
+    }
+    return vec2f(0,0);
 }
 
 fn ray_at(ray: Ray, dist: f32) -> vec3f {
@@ -160,7 +173,7 @@ fn ray_color(ray: Ray) -> vec3f {
     var current_ray = ray;
 
     for (var i = 0; i < MAX_DEPTH; i++) {
-        let hit_record = hit(current_ray, 0.0001, 10000);
+        let hit_record = hit(current_ray, 0.00001, 10000);
         var direction: vec3f;
         var bounced_ray: BouncedRay;
 
@@ -200,89 +213,68 @@ fn ray_color(ray: Ray) -> vec3f {
     return vec3f(0, 0, 0);
 }
 
-// @fragment 
-// fn fragmentMain(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-//     // let pos = opos/vec4f(window_size,0,1);
-//     rng_state = i32(pos.x * pos.y - pos.x + pos.y);
-
-//     let vfov: f32 = 90;
-//     let theta = radians(vfov);
-//     let h = tan(theta / 2);
-//     let aspect_ratio = window_size.x / window_size.y;
-
-//     let lookfrom = vec3f(0, 0, -1);  // Point camera is looking from
-//     let lookat = vec3f(0, 0, 0);   // Point camera is looking at
-//     let vup = vec3f(0, 1, 0);
-//     let focal_length = length(lookfrom - lookat);
-//     let viewport_height = 2 * h * focal_length;
-
-//     let w = normalize(lookfrom - lookat);
-//     let u = normalize(cross(vup, w));
-//     let v = cross(w, u);
-
-//     let viewport_u = viewport_height * aspect_ratio * u;    // Vector across viewport horizontal edge
-//     let viewport_v = viewport_height * -v;
-//     let viewport_upper_left = lookfrom - (focal_length * w) - viewport_u / 2 - viewport_v / 2;
-      
-//         // Map pos from y-down viewport coordinates to camera viewport plane coordinates.
-//     var uv = pos.xy / (window_size - 1);
-//     uv = (viewport_height * uv - 1.) * vec2(aspect_ratio, -1.);
-
-//     let pixel_delta = uv / window_size;
-
-//     var direction = vec3f(uv, -focal_length);
-//     var ray = Ray(cam_center, normalize(direction));
-
-//     var sum = ray_color(ray);
-
-//     for (var i = 0; i < ANTIALIASING_SAMPLES; i++) {
-//         let offset = pixel_delta * vec2f(random_float(), random_float());
-//         direction = vec3(uv + offset, -focal_length);
-//         ray = Ray(cam_center, normalize(direction));
-//         sum += ray_color(ray);
-//     }
-
-//     let averagedColor = sum / f32(ANTIALIASING_SAMPLES + 1);
-//     return vec4(sqrt(averagedColor), 1.); //sqrt for gamma correction
-// }
-
-
 @fragment 
-fn fragmentMain3(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-    let outputColor = modelViewProjectionMatrix * pos/vec4f(window_size,1,1);
-    return vec4f(outputColor.xyz,1);
-}
-
-
-@fragment 
-fn fragmentMain2(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+fn fragmentMain(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    // let pos = opos/vec4f(window_size,0,1);
     rng_state = i32(pos.x * pos.y - pos.x + pos.y);
 
+    let vfov: f32 = 20;
+    let theta = radians(vfov);
+    let h = tan(theta / 2);
+    let defocus_angle =0.6;
+    let focus_dist = 10.0;
     let aspect_ratio = window_size.x / window_size.y;
-    let focal_length = 1.;
-    let viewport_height = 2.;
 
-    let viewport_u = viewport_height * aspect_ratio;    // Vector across viewport horizontal edge
-    let viewport_v = viewport_height;
+    let lookfrom = vec3f(13,2,3);  // Point camera is looking from
+    let lookat = vec3f(0, 0,0);   // Point camera is looking at
+    let vup = vec3f(0, 1, 0);
+    let focal_length = length(lookfrom - lookat);
+    let viewport_height = 2 * h * focus_dist;
+
+    let center = lookfrom;
+
+    let w = normalize(lookfrom - lookat);
+    let u = normalize(cross(vup, w));
+    let v = cross(w, u);
+
+    let viewport_u = viewport_height * aspect_ratio * u;    // Vector across viewport horizontal edge
+    let viewport_v = viewport_height * -v;
+    let viewport_upper_left = center - (focus_dist * w) - viewport_u / 2 - viewport_v / 2;
+
+      // Calculate the camera defocus disk basis vectors.
+    let defocus_radius = focus_dist * tan(radians(defocus_angle / 2));
+    let defocus_disk_u = u * defocus_radius;
+    let defocus_disk_v = v * defocus_radius;
       
         // Map pos from y-down viewport coordinates to camera viewport plane coordinates.
-    var uv = pos.xy / (window_size - 1);
-    uv = (viewport_height * uv - 1.) * vec2(aspect_ratio, -1.);
+    let pixel_delta_u = viewport_u/window_size.x;
+    let pixel_delta_v = viewport_v/window_size.y;
 
-    let pixel_delta = uv / window_size;
+    let pixel_loc = viewport_upper_left + (pos.x+.5)*pixel_delta_u + (pos.y+.5)*pixel_delta_v;
 
-    var direction = vec3f(uv, -focal_length);
-    var ray = Ray(cam_center, normalize(direction));
+    var ray_origin = center;
 
-    var sum = ray_color(ray);
+    // if(defocus_angle>0){
+    //     let p = random_in_unit_disk();
+    //     ray_origin+=  (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+        
+    // }
 
-    for (var i = 0; i < ANTIALIASING_SAMPLES; i++) {
-        let offset = pixel_delta * vec2f(random_float(), random_float());
-        direction = vec3(uv + offset, -focal_length);
-        ray = Ray(cam_center, normalize(direction));
+    var sum =vec3f(0,0,0);
+
+    for (var i = 0;     i < ANTIALIASING_SAMPLES; i++) {
+        let pixel_sample =pixel_loc+ (-0.5+random_float())*pixel_delta_u + (-0.5+random_float())*pixel_delta_v;
+        ray_origin = center;
+
+        if(defocus_angle>0){
+            let p = random_in_unit_disk();
+            ray_origin+=  (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+            
+        }
+        let ray = Ray(ray_origin, normalize(pixel_sample-ray_origin));
         sum += ray_color(ray);
     }
 
-    let averagedColor = sum / f32(ANTIALIASING_SAMPLES + 1);
+    let averagedColor = sum / f32(ANTIALIASING_SAMPLES);
     return vec4(sqrt(averagedColor), 1.); //sqrt for gamma correction
 }

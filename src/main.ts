@@ -2,7 +2,7 @@ import fragmentShader from './fragment.wgsl?raw'
 import vertexShader from './vertex.wgsl?raw'
 
 
-import { getBGCoverRectVertices,spheres,type Sphere } from './utils';
+import { getBGCoverRectVertices,objects as spheres,type Sphere } from './utils';
 
 const cameraCenter = new Float32Array([0, 0, 0])
 
@@ -155,7 +155,7 @@ const cellPipeline = device.createRenderPipeline({
     },
     fragment: {
         module: cellShaderModule,
-        entryPoint: "fragmentMain2",
+        entryPoint: "fragmentMain",
         targets: [{
             format: canvasFormat
         }]
