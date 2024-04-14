@@ -119,7 +119,7 @@ function distance(v1: Vec3, v2: Vec3) {
 
 export const objects: Sphere[] = [];
 
-const span = 2;
+const span = 3;
 
 for (let i = -span; i < span; i++) {
     for (let j = -span; j < span; j++) {
